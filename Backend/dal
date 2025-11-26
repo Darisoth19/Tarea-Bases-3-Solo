@@ -1,0 +1,603 @@
+import pyodbc
+
+SERVER = "localhost"
+DATABASE = "MunicipalidadP3"
+
+
+def obtener_conexion():
+    conn = pyodbc.connect(
+        "DRIVER={ODBC Driver 17 for SQL Server};"
+        f"SERVER={SERVER};"
+        f"DATABASE={DATABASE};"
+        "Trusted_Connection=yes;"
+        "TrustServerCertificate=yes;",
+        timeout=5,
+        autocommit=True,
+    )
+    return conn
+
+
+# =====================================================================
+#  FUNCIONES PARA CARGA DESDE XML
+# =====================================================================
+
+def insertar_persona_xml(valorDocumento, nombre_completo, email, telefono):
+    partes = nombre_completo.strip().split()
+
+    nombre1 = ""
+    nombre2 = None
+    apellido1 = None
+    apellido2 = None
+
+    if len(partes) == 1:
+        nombre1 = partes[0]
+    elif len(partes) == 2:
+        nombre1 = partes[0]
+        apellido1 = partes[1]
+    elif len(partes) == 3:
+        nombre1 = partes[0]
+        apellido1 = partes[1]
+        apellido2 = partes[2]
+    else:
+        nombre1 = partes[0]
+        nombre2 = partes[1]
+        apellido1 = partes[2]
+        apellido2 = " ".join(partes[3:])
+
+    params = (
+        1,   
+        valorDocumento, 
+        nombre1, 
+        nombre2,    
+        apellido1,      
+        apellido2,      
+        None,          
+        email,          
+        0,          
+        0,              
+    )
+
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        EXEC dbo.spPersona_Insertar
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        """,
+        params,
+    )
+    conn.commit()
+    conn.close()
+
+
+def insertar_propiedad_xml(
+    numeroFinca,
+    numeroMedidor,
+    metrosCuadrados,
+    tipoUsoId,
+    tipoZonaId,
+    valorFiscal,
+    fechaRegistro,
+):
+    params = (
+        numeroFinca,                                      
+        None,                                              
+        float(metrosCuadrados) if metrosCuadrados else 0.0,  
+        None,                                             
+        None,                                          
+        int(tipoUsoId) if tipoUsoId is not None else None, 
+        int(tipoZonaId) if tipoZonaId is not None else None, 
+        float(valorFiscal) if valorFiscal is not None else None,  
+        fechaRegistro,                                      
+        0,                                              
+        0,                                                  
+    )
+
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        EXEC dbo.spPropiedad_Insertar
+            @inCodigoCatastral     = ?,
+            @inIdDireccion         = ?,
+            @inAreaTerreno         = ?,
+            @inAreaConstruccion    = ?,
+            @inIdDistritoServicio  = ?,
+            @inIdTipoUso           = ?,
+            @inIdTipoZona          = ?,
+            @inValor               = ?,
+            @inFechaRegistro       = ?,
+            @outIdPropiedad        = ? OUTPUT,
+            @outResultCode         = ? OUTPUT;
+        """,
+        params,
+    )
+    conn.commit()
+    conn.close()
+
+
+def asociar_propietario_xml(valorDocumento, numeroFinca, tipoAsociacionId):
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+
+    # Buscar persona por NumeroIdentificacion
+    cursor.execute(
+        "SELECT IdPersona FROM Persona WHERE NumeroIdentificacion = ?",
+        (valorDocumento,),
+    )
+    row = cursor.fetchone()
+
+    if row is None:
+        insertar_persona_xml(valorDocumento, "SIN NOMBRE", None, None)
+        cursor.execute(
+            "SELECT IdPersona FROM Persona WHERE NumeroIdentificacion = ?",
+            (valorDocumento,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            conn.close()
+            raise Exception("No se pudo crear persona")
+
+    id_persona = row[0]
+
+    # Buscar propiedad por CodigoCatastral
+    cursor.execute(
+        "SELECT IdPropiedad FROM Propiedad WHERE CodigoCatastral = ?",
+        (numeroFinca,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        conn.close()
+        raise Exception("No existe propiedad")
+
+    id_propiedad = row[0]
+
+    es_propietario = 1 if tipoAsociacionId == "1" else 0
+    es_arrendatario = 1 if tipoAsociacionId == "2" else 0
+
+    cursor.execute(
+        """
+        EXEC dbo.spPropietario_Asociar
+            @inIdPersona = ?,
+            @inIdPropiedad = ?,
+            @inEsPropietario = ?,
+            @inEsArrendatario = ?,
+            @inFechaDesde = ?,
+            @outIdPersonaXPropiedad = ?,
+            @outResultCode = ?;
+        """,
+        (
+            id_persona,
+            id_propiedad,
+            es_propietario,
+            es_arrendatario,
+            None,
+            None,  
+            None,  
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def desasociar_propietario_xml(valorDocumento, numeroFinca):
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        DECLARE @idPersona INT, @idPropiedad INT, @hoy DATE;
+        SET @hoy = CAST(SYSDATETIME() AS DATE);
+
+        SELECT @idPersona = IdPersona
+        FROM Persona
+        WHERE NumeroIdentificacion = ?;
+
+        SELECT @idPropiedad = IdPropiedad
+        FROM Propiedad
+        WHERE CodigoCatastral = ?;
+
+        EXEC dbo.spPropietario_Desasociar
+            @inIdPersona   = @idPersona,
+            @inIdPropiedad = @idPropiedad,
+            @inFechaHasta  = @hoy,
+            @outResultCode = NULL;
+        """,
+        (valorDocumento, numeroFinca),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def insertar_lectura_medidor_xml(fechaOperacion, numeroMedidor, tipoMovimientoId, valor):
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+
+
+    codigo_catastral = numeroMedidor.replace("M-", "F-0")
+
+    cursor.execute(
+        "SELECT IdPropiedad FROM Propiedad WHERE CodigoCatastral = ?",
+        (codigo_catastral,),
+    )
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        return
+
+    id_propiedad = row[0]
+
+    cursor.execute(
+        """
+        DECLARE @rc INT;
+
+        EXEC dbo.spLectura_Insertar
+            @inIdPropiedad      = ?,
+            @inFechaLectura     = ?,
+            @inIdTipoMovimiento = ?,
+            @inConsumoM3        = ?,
+            @inObservacion      = NULL,
+            @outResultCode      = @rc OUTPUT;
+        """,
+        (
+            id_propiedad,
+            fechaOperacion,
+            int(tipoMovimientoId),
+            float(valor),
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+# =====================================================================
+#  PAGOS: CONSULTA Y REGISTRO DE FACTURAS
+# =====================================================================
+
+def obtener_propiedad_y_factura_por_finca(codigo_catastral: str):
+    """
+    Busca la propiedad por código catastral y la factura pendiente más vieja
+    (IdEstadoFactura = 1) asociada a esa propiedad.
+    """
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+
+    # 1) Datos de la propiedad + propietario
+    cursor.execute(
+        """
+        SELECT TOP 1
+            pr.IdPropiedad,
+            pr.CodigoCatastral,
+            RTRIM(
+                ISNULL(pe.Nombre1, '') + ' ' +
+                ISNULL(pe.Nombre2, '') + ' ' +
+                ISNULL(pe.Apellido1, '') + ' ' +
+                ISNULL(pe.Apellido2, '')
+            ) AS NombrePropietario,
+            pe.NumeroIdentificacion
+        FROM PersonaXPropiedad pxp
+        JOIN Persona   pe ON pxp.IdPersona   = pe.IdPersona
+        JOIN Propiedad pr ON pxp.IdPropiedad = pr.IdPropiedad
+        WHERE pxp.FechaHasta IS NULL
+          AND pr.CodigoCatastral = ?
+        """,
+        (codigo_catastral,),
+    )
+
+    fila_prop = cursor.fetchone()
+    if not fila_prop:
+        cursor.close()
+        conn.close()
+        return {"propiedad": None, "factura": None}
+
+    id_propiedad = fila_prop[0]
+
+    propiedad = {
+        "idPropiedad": fila_prop[0],
+        "codigoCatastral": fila_prop[1],
+        "propietario": fila_prop[2],
+        "cedula": fila_prop[3],
+    }
+
+    # 2) Factura pendiente más vieja de esa propiedad
+    cursor.execute(
+        """
+        SELECT TOP 1
+            f.IdFactura,
+            f.MontoTotalFinal,
+            f.FechaEmision,
+            f.FechaLimitePago,
+            f.FechaVencimiento
+        FROM Factura f
+        WHERE f.IdPropiedad     = ?
+          AND f.IdEstadoFactura = 1      -- 1 = Pendiente
+          AND f.MontoTotalFinal > 0
+        ORDER BY
+            f.FechaVencimiento,
+            f.FechaEmision
+        """,
+        (id_propiedad,),
+    )
+
+    fila_fact = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if fila_fact:
+        factura = {
+            "idFactura": fila_fact[0],
+            "montoTotal": float(fila_fact[1]) if fila_fact[1] is not None else 0.0,
+            "fechaEmision": fila_fact[2].isoformat() if fila_fact[2] else None,
+            "fechaLimitePago": fila_fact[3].isoformat() if fila_fact[3] else None,
+            "fechaVencimiento": fila_fact[4].isoformat() if fila_fact[4] else None,
+        }
+    else:
+        factura = None
+
+    return {"propiedad": propiedad, "factura": factura}
+
+
+# --------------------------------------------------------------------
+# PAGOS: obtener propiedad + factura pendiente más vieja POR CÉDULA
+# --------------------------------------------------------------------
+def obtener_propiedad_y_factura_por_propietario(cedula: str):
+    """
+    Busca la PRIMERA propiedad actual de un propietario por su número
+    de identificación y la factura pendiente más vieja asociada.
+    """
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+
+    # 1) Propiedad actual del propietario + datos de la persona
+    cursor.execute(
+        """
+        SELECT TOP 1
+            pr.IdPropiedad,
+            pr.CodigoCatastral,
+            RTRIM(
+                ISNULL(pe.Nombre1, '') + ' ' +
+                ISNULL(pe.Nombre2, '') + ' ' +
+                ISNULL(pe.Apellido1, '') + ' ' +
+                ISNULL(pe.Apellido2, '')
+            ) AS NombrePropietario,
+            pe.NumeroIdentificacion
+        FROM PersonaXPropiedad pxp
+        JOIN Persona   pe ON pxp.IdPersona   = pe.IdPersona
+        JOIN Propiedad pr ON pxp.IdPropiedad = pr.IdPropiedad
+        WHERE pxp.FechaHasta IS NULL
+          AND pe.NumeroIdentificacion = ?
+        ORDER BY pr.CodigoCatastral
+        """,
+        (cedula,),
+    )
+
+    fila_prop = cursor.fetchone()
+    if not fila_prop:
+        cursor.close()
+        conn.close()
+        return {"propiedad": None, "factura": None}
+
+    id_propiedad = fila_prop[0]
+
+    propiedad = {
+        "idPropiedad": fila_prop[0],
+        "codigoCatastral": fila_prop[1],
+        "propietario": fila_prop[2],
+        "cedula": fila_prop[3],
+    }
+
+    # 2) Factura pendiente más vieja de esa propiedad
+    cursor.execute(
+        """
+        SELECT TOP 1
+            f.IdFactura,
+            f.MontoTotalFinal,
+            f.FechaEmision,
+            f.FechaLimitePago,
+            f.FechaVencimiento
+        FROM Factura f
+        WHERE f.IdPropiedad     = ?
+          AND f.IdEstadoFactura = 1      -- 1 = Pendiente
+          AND f.MontoTotalFinal > 0
+        ORDER BY
+            f.FechaVencimiento,
+            f.FechaEmision
+        """,
+        (id_propiedad,),
+    )
+
+    fila_fact = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if fila_fact:
+        factura = {
+            "idFactura": fila_fact[0],
+            "montoTotal": float(fila_fact[1]) if fila_fact[1] is not None else 0.0,
+            "fechaEmision": fila_fact[2].isoformat() if fila_fact[2] else None,
+            "fechaLimitePago": fila_fact[3].isoformat() if fila_fact[3] else None,
+            "fechaVencimiento": fila_fact[4].isoformat() if fila_fact[4] else None,
+        }
+    else:
+        factura = None
+
+    return {"propiedad": propiedad, "factura": factura}
+
+def pagar_factura(idFactura: int) -> bool:
+    """
+    Usa spPago_Registrar para cancelar la factura indicada.
+    Devuelve True si el pago fue exitoso (ResultCode = 0).
+    """
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+    try:
+        # Buscar propietario ligado a la factura
+        cursor.execute(
+            """
+            SELECT TOP (1) p.IdPersona
+            FROM Factura f
+            JOIN Propiedad pr       ON f.IdPropiedad = pr.IdPropiedad
+            JOIN PersonaXPropiedad pxp ON pr.IdPropiedad = pxp.IdPropiedad
+            JOIN Persona p          ON pxp.IdPersona = p.IdPersona
+            WHERE f.IdFactura = ?
+              AND pxp.FechaHasta IS NULL;
+            """,
+            (idFactura,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            print("[ERROR] No se encontró propietario para esta factura.")
+            return False
+
+        idPersona = row[0]
+        medio_pago = 1  
+        numero_recibo = f"REC-{idFactura}"
+
+        cursor.execute(
+            """
+            DECLARE @outIdPago INT, @outRC INT;
+
+            EXEC dbo.spPago_Registrar
+                 @inIdFactura    = ?,
+                 @inIdPersona    = ?,
+                 @inFechaPago    = NULL,
+                 @inMedioPago    = ?,
+                 @inNumeroRecibo = ?,
+                 @outIdPago      = @outIdPago OUTPUT,
+                 @outResultCode  = @outRC OUTPUT;
+
+            SELECT @outIdPago AS IdPago, @outRC AS ResultCode;
+            """,
+            (idFactura, idPersona, medio_pago, numero_recibo),
+        )
+
+        result = cursor.fetchone()
+        print("[DEBUG] Resultado spPago_Registrar:", result)
+
+        conn.commit()
+
+        if not result:
+            return False
+
+        resultCode = result[1]
+        return resultCode == 0
+
+    except Exception as e:
+        print("[ERROR] pagar_factura:", e)
+        return False
+
+    finally:
+        conn.close()
+
+
+# =====================================================================
+#  LISTADOS PARA LA INTERFAZ
+# =====================================================================
+
+def listar_personas():
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            NumeroIdentificacion,
+            RTRIM(
+                ISNULL(Nombre1, '') + ' ' +
+                ISNULL(Nombre2, '') + ' ' +
+                ISNULL(Apellido1, '') + ' ' +
+                ISNULL(Apellido2, '')
+            ) AS NombreCompleto,
+            Email
+        FROM Persona
+        """
+    )
+    filas = cursor.fetchall()
+    conn.close()
+
+    personas = []
+    for fila in filas:
+        personas.append(
+            {
+                "numeroIdentificacion": fila[0],
+                "nombre": fila[1],
+                "email": fila[2],
+            }
+        )
+    return personas
+
+
+def listar_propiedades():
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            CodigoCatastral,
+            AreaTerreno,
+            IdTipoUso,
+            IdTipoZona,
+            Valor,
+            FechaRegistro
+        FROM Propiedad
+        """
+    )
+    filas = cursor.fetchall()
+    conn.close()
+
+    propiedades = []
+    for fila in filas:
+        propiedades.append(
+            {
+                "codigoCatastral": fila[0],
+                "areaTerreno": float(fila[1]) if fila[1] is not None else None,
+                "idTipoUso": fila[2],
+                "idTipoZona": fila[3],
+                "valor": float(fila[4]) if fila[4] is not None else None,
+                "fechaRegistro": str(fila[5]) if fila[5] is not None else None,
+            }
+        )
+    return propiedades
+
+
+def listar_propietarios():
+    conn = obtener_conexion()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            p.NumeroIdentificacion,
+            RTRIM(
+                ISNULL(p.Nombre1, '') + ' ' +
+                ISNULL(p.Nombre2, '') + ' ' +
+                ISNULL(p.Apellido1, '') + ' ' +
+                ISNULL(p.Apellido2, '')
+            ) AS NombreCompleto,
+            pr.CodigoCatastral
+        FROM PersonaXPropiedad pxp
+        JOIN Persona   p  ON pxp.IdPersona   = p.IdPersona
+        JOIN Propiedad pr ON pxp.IdPropiedad = pr.IdPropiedad
+        WHERE pxp.FechaHasta IS NULL
+        """
+    )
+    filas = cursor.fetchall()
+    conn.close()
+
+    propietarios = []
+    for fila in filas:
+        propietarios.append(
+            {
+                "numeroIdentificacion": fila[0],
+                "nombre": fila[1],
+                "codigoCatastral": fila[2],
+            }
+        )
+    return propietarios
