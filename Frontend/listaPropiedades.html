@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Consultar propiedad por número de finca</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f7f2fa;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .search-container {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 20px;
+      align-items: center;
+    }
+
+    .search-button {
+      border: none;
+      background-color: #d4d4d4;
+      color: #333;
+      padding: 12px 24px;
+      border-radius: 25px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .search-button:hover {
+      background-color: #c0c0c0;
+    }
+
+    input[type="text"] {
+      padding: 12px 20px;
+      border: 1px solid #ccc;
+      border-radius: 25px;
+      font-size: 14px;
+      width: 250px;
+      outline: none;
+    }
+
+    input[type="text"]:focus {
+      border-color: #6b4fd3;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 60%;
+      background-color: #fff;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      text-align: center;
+      padding: 12px;
+    }
+    th {
+      background-color: #e0e0ff;
+    }
+
+    button {
+      border: none;
+      background-color: #6b4fd3;
+      color: white;
+      padding: 8px 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      margin: 3px;
+    }
+    button:hover {
+      background-color: #543bb5;
+    }
+  </style>
+</head>
+<body>
+  <h2>Consultar propiedad por número de finca</h2>
+
+  <div class="search-container">
+    <button class="search-button" onclick="filtrarPropiedades()">Número de finca</button>
+    <input type="text" id="searchInput" placeholder="Escriba el número de finca">
+  </div>
+
+  <table id="tablaPropiedades">
+    <thead>
+      <tr>
+        <th>Número de finca</th>
+        <th>Acción</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Filas dinámicas -->
+    </tbody>
+  </table>
+  <script>
+  async function cargarPropiedades() {
+    try {
+      const resp = await fetch("/api/propiedades");
+      if (!resp.ok) throw new Error("Error al cargar propiedades");
+
+      const data = await resp.json();
+      const tbody = document.querySelector("#tablaPropiedades tbody");
+      tbody.innerHTML = "";
+
+      data.forEach(p => {
+        const codigo = p.codigoCatastral ?? "";
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${codigo}</td>
+          <td>
+            <button onclick="irAPagos('${codigo}')">
+              Seleccionar
+            </button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    } catch (err) {
+      console.error(err);
+      alert("No se pudieron cargar las propiedades.");
+    }
+  }
+
+  function irAPagos(codigo) {
+    // manda a la página de pagos con la finca en la URL
+    window.location.href = `/pagos?finca=${encodeURIComponent(codigo)}`;
+  }
+
+  function filtrarPorFinca() {
+    const input = document.getElementById("searchInput");
+    const filtro = input.value.trim().toLowerCase();
+    const filas = document.querySelectorAll("#tablaPropiedades tbody tr");
+
+    filas.forEach(fila => {
+      const finca = fila.children[0].textContent.toLowerCase();
+      if (!filtro || finca.includes(filtro)) {
+        fila.style.display = "";
+      } else {
+        fila.style.display = "none";
+      }
+    });
+  }
+
+  // Cargar al abrir
+  cargarPropiedades();
+</script>
+
+</body>
+</html>

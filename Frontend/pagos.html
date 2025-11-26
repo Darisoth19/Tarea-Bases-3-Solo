@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pago de facturas</title>
+
+  <!-- CSS global (si el archivo se llama distinto, cámbialo) -->
+  <link rel="stylesheet" href="/static/style.css" />
+
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f8f4f8;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+
+    .card {
+      background-color: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+      padding: 25px 30px;
+      width: 700px;
+    }
+
+    h2 {
+      margin-top: 0;
+      color: #333;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      color: #444;
+    }
+
+    .section {
+      margin-top: 20px;
+      padding-top: 15px;
+      border-top: 1px solid #e5e5e5;
+    }
+
+    .search-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 10px;
+    }
+
+    .toggle-group {
+      display: inline-flex;
+      border-radius: 20px;
+      background-color: #ece7ff;
+      overflow: hidden;
+    }
+
+    .toggle-btn {
+      border: none;
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      background-color: transparent;
+      color: #555;
+      transition: background-color 0.2s, color 0.2s;
+      outline: none;
+      white-space: nowrap;
+    }
+
+    .toggle-btn.active {
+      background-color: #6b4fd3;
+      color: #fff;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      min-width: 210px;
+      padding: 10px 14px;
+      border-radius: 20px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+      outline: none;
+    }
+
+    input[type="text"]:focus {
+      border-color: #6b4fd3;
+    }
+
+    .btn-primary {
+      border: none;
+      padding: 10px 18px;
+      border-radius: 20px;
+      background-color: #6b4fd3;
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      white-space: nowrap;
+    }
+
+    .btn-primary:hover {
+      background-color: #543bb5;
+    }
+
+    .btn-primary[disabled] {
+      background-color: #c3b9f5;
+      cursor: not-allowed;
+    }
+
+    .detail-box {
+      background-color: #faf8ff;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 14px;
+      color: #444;
+    }
+
+    .detail-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+
+    .detail-label {
+      font-weight: 600;
+    }
+
+    .no-data {
+      font-size: 13px;
+      color: #999;
+      font-style: italic;
+    }
+
+    .status-message {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #2e7d32;
+    }
+
+    .status-message.error {
+      color: #c62828;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Pago de facturas</h2>
+    <p>Busque una propiedad por número de finca o por cédula de propietario y pague el recibo más viejo pendiente.</p>
+
+    <!-- Sección de búsqueda -->
+    <div class="section">
+      <h3>Búsqueda</h3>
+      <div class="search-row">
+        <div class="toggle-group">
+          <button id="btnPorFinca" class="toggle-btn active" onclick="cambiarModo('finca')">
+            Por número de finca
+          </button>
+          <button id="btnPorCedula" class="toggle-btn" onclick="cambiarModo('cedula')">
+            Por cédula de propietario
+          </button>
+        </div>
+
+        <input
+          type="text"
+          id="inputBusqueda"
+          placeholder="Ejemplo: F-0001"
+        />
+
+        <button class="btn-primary" onclick="buscar()">
+          Buscar
+        </button>
+      </div>
+    </div>
+
+    <!-- Detalle de propiedad -->
+    <div class="section">
+      <h3>Detalle de la propiedad</h3>
+      <div id="detallePropiedad" class="detail-box">
+        <p class="no-data">No hay ninguna propiedad seleccionada.</p>
+      </div>
+    </div>
+
+    <!-- Factura más vieja pendiente -->
+    <div class="section">
+      <h3>Factura más vieja pendiente</h3>
+      <div id="detalleFactura" class="detail-box">
+        <p class="no-data">Todavía no se ha consultado ninguna factura pendiente.</p>
+      </div>
+
+      <button id="btnPagar" class="btn-primary" style="margin-top: 10px;" disabled onclick="pagarFactura()">
+        Pagar factura
+      </button>
+
+      <div id="mensajeEstado" class="status-message" style="display:none;"></div>
+    </div>
+  </div>
+
+  <script>
+    let modoBusqueda = "finca";      // 'finca' o 'cedula'
+    let facturaSeleccionada = null;  // aquí guardamos la factura más vieja devuelta por la API
+
+    function cambiarModo(modo) {
+      modoBusqueda = modo;
+
+      const btnFinca = document.getElementById("btnPorFinca");
+      const btnCedula = document.getElementById("btnPorCedula");
+      const input = document.getElementById("inputBusqueda");
+
+      if (modo === "finca") {
+        btnFinca.classList.add("active");
+        btnCedula.classList.remove("active");
+        input.placeholder = "Ejemplo: F-0001";
+      } else {
+        btnCedula.classList.add("active");
+        btnFinca.classList.remove("active");
+        input.placeholder = "Ejemplo: 123456789";
+      }
+    }
+
+    async function buscar() {
+      let valor = document.getElementById("inputBusqueda").value.trim();
+      const msgEstado = document.getElementById("mensajeEstado");
+      msgEstado.style.display = "none";
+
+      if (!valor) {
+        alert("Por favor ingrese un valor de búsqueda.");
+        return;
+      }
+
+      // Normalizar formato de finca: F-0001
+      if (modoBusqueda === "finca") {
+        valor = valor.toUpperCase();
+        const match = valor.match(/^F-(\d+)$/);
+        if (match) {
+          const numero = match[1];
+          valor = "F-" + numero.padStart(4, "0").slice(-4);
+        }
+      }
+
+      let url = "";
+      if (modoBusqueda === "finca") {
+        url = `/api/pagos/por-finca/${encodeURIComponent(valor)}`;
+      } else {
+        url = `/api/pagos/por-propietario/${encodeURIComponent(valor)}`;
+      }
+
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          limpiarDetalle();
+          alert("No se encontró información para la búsqueda indicada.");
+          return;
+        }
+
+        const datos = await resp.json();
+        // Coincide con lo que devuelve main.py: { propiedad: {...}, facturaMasVieja: {...} }
+        mostrarPropiedad(datos.propiedad);
+        mostrarFactura(datos.facturaMasVieja);
+      } catch (e) {
+        console.error(e);
+        limpiarDetalle();
+        alert("Ocurrió un error al consultar la información.");
+      }
+    }
+
+    // === PROPIEDAD ===
+    function mostrarPropiedad(prop) {
+      const div = document.getElementById("detallePropiedad");
+
+      if (!prop) {
+        div.innerHTML = '<p class="no-data">No se encontró información de la propiedad.</p>';
+        return;
+      }
+
+      const codigo = prop.codigoCatastral || "N/D";
+      const nombre = prop.propietario || "N/D"; // <-- viene como 'propietario' en el JSON
+      const cedula = prop.cedula || "N/D";      // <-- viene como 'cedula' en el JSON
+
+      div.innerHTML = `
+        <div class="detail-row">
+          <span class="detail-label">Número de finca:</span> ${codigo}
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Propietario:</span> ${nombre}
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Cédula:</span> ${cedula}
+        </div>
+      `;
+    }
+
+    // === FACTURA ===
+    function mostrarFactura(factura) {
+      const div = document.getElementById("detalleFactura");
+      const btnPagar = document.getElementById("btnPagar");
+
+      if (!factura) {
+        div.innerHTML = '<p class="no-data">No hay facturas pendientes para esta propiedad.</p>';
+        facturaSeleccionada = null;
+        btnPagar.disabled = true;
+        return;
+      }
+
+      facturaSeleccionada = factura;
+      btnPagar.disabled = false;
+
+      const id = factura.idFactura ?? "N/D";
+      const emision = factura.fechaEmision ?? "N/D";
+      const venc = factura.fechaVencimiento ?? "N/D";
+      const monto = factura.montoTotal ?? 0;
+      const total = monto; // por ahora total = monto
+
+      div.innerHTML = `
+        <div class="detail-row">
+          <span class="detail-label">ID factura:</span> ${id}
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Fecha emisión:</span> ${emision}
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Fecha vencimiento:</span> ${venc}
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Monto:</span> ₡${monto}
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Total a pagar:</span> <strong>₡${total}</strong>
+        </div>
+      `;
+    }
+
+    function limpiarDetalle() {
+      document.getElementById("detallePropiedad").innerHTML =
+        '<p class="no-data">No hay ninguna propiedad seleccionada.</p>';
+      document.getElementById("detalleFactura").innerHTML =
+        '<p class="no-data">Todavía no se ha consultado ninguna factura pendiente.</p>';
+      document.getElementById("btnPagar").disabled = true;
+      facturaSeleccionada = null;
+    }
+
+    async function pagarFactura() {
+      if (!facturaSeleccionada || !facturaSeleccionada.idFactura) {
+        return;
+      }
+
+      const confirmar = confirm(
+        "¿Desea pagar la factura seleccionada?\n\nEsta acción registrará el pago del recibo más viejo pendiente."
+      );
+      if (!confirmar) return;
+
+      const msgEstado = document.getElementById("mensajeEstado");
+      msgEstado.style.display = "none";
+
+      try {
+        const resp = await fetch("/api/pagos/pagar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idFactura: facturaSeleccionada.idFactura }),
+        });
+
+        if (!resp.ok) {
+          msgEstado.textContent = "No se pudo registrar el pago.";
+          msgEstado.className = "status-message error";
+          msgEstado.style.display = "block";
+          return;
+        }
+
+        const data = await resp.json();
+        msgEstado.textContent = data.mensaje || "Pago registrado correctamente.";
+        msgEstado.className = "status-message";
+        msgEstado.style.display = "block";
+
+        // Después de pagar, ya no debería haber factura pendiente
+        mostrarFactura(null);
+      } catch (e) {
+        console.error(e);
+        msgEstado.textContent = "Ocurrió un error al procesar el pago.";
+        msgEstado.className = "status-message error";
+        msgEstado.style.display = "block";
+      }
+    }
+      // Al cargar la página de pagos, revisamos si viene ?finca=... o ?cedula=...
+    document.addEventListener("DOMContentLoaded", () => {
+      const params = new URLSearchParams(window.location.search);
+      const finca = params.get("finca");
+      const cedula = params.get("cedula");
+
+      if (finca) {
+        cambiarModo("finca");
+        document.getElementById("inputBusqueda").value = finca;
+        buscar();
+      } else if (cedula) {
+        cambiarModo("cedula");
+        document.getElementById("inputBusqueda").value = cedula;
+        buscar();
+      }
+    });
+
+
+  </script>
+</body>
+</html>
